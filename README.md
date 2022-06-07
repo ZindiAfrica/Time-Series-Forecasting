@@ -33,6 +33,12 @@ Stock Price Prediction, E-Commerce Sales Prediction, Weather Predicition and man
 Zindi has hosted some challenges based on Time-Series Forecasting Solutions.
 	
 ## List of Time-Series Forecasting solutions from our hosted challenges:
-1.[Sea Turtle Rescue: Forecast Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Sea%20Turtle%20Rescue%20Forecast%20Challenge)
+1. [AI4D Predict the Global Spread of COVID-19](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/AI4D%20Predict%20the%20Global%20Spread%20of%20COVID-19)
 
-2.[UNICEF Arm 2030 VISION #1: Flood Prediction in Malawi](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/UNICEF%20Arm%202030%20VISION%20%231%20%20Flood%20Prediction%20in%20Malawi)
+2. [AirQo Ugandan Air Quality Forecast Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/AirQo%20Ugadan%20Air%20Quality%20Forecast%20Challenge)
+
+3. [Sea Turtle Rescue: Forecast Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Sea%20Turtle%20Rescue%20Forecast%20Challenge)
+
+4. [UNICEF Arm 2030 VISION #1: Flood Prediction in Malawi](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/UNICEF%20Arm%202030%20VISION%20%231%20%20Flood%20Prediction%20in%20Malawi)
+
+5. [Wazihub Soil Moisture Prediction Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Wazihub%20Soil%20Moisture%20Prediction%20Challenge)
