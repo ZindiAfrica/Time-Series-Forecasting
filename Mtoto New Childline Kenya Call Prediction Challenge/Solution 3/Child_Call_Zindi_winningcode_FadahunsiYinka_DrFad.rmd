@@ -1,0 +1,880 @@
+---
+title: "Call Prediction Zindi"
+author: "Dr Fad"
+date: "April 17, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+#Load Library
+```{r}
+library(stringr)
+library(sqldf)
+library(dplyr)
+library(lubridate) #For date manupilation
+library(Boruta) #for feature selection
+library(caret)
+
+```
+
+
+
+#Load Data
+```{r}
+Child <- read.csv("<Path to Data>/train (1).csv")
+Submit <- read.csv("<Path to Data>/Sample_Submission (4).csv")
+Public_hol <-  read.csv("<Path to Data>/KenyaPublicHolidays2016.csv")
+School_Dates <- read.csv("<Path to Data>/NairobiSchoolDates2016.csv")
+Weather <- read.csv("<Path to Data>/63740.01.01.2016.06.09.2016.1.0.0.en.utf8.00000000 (1).csv")
+Weather_wilson <- read.csv("<Path to Data>/Nairobi_Wilson_airport_metar.csv")
+```
+
+
+#Transform data
+```{r}
+##################################################
+# Transform Child
+##################################################
+#Leave only calldate and subcat1
+Child <- Child[,c(1,4)]
+Child$calldate <- as.character(Child$calldate)
+Child$time_index <- str_sub(Child$calldate, 1, 13)
+Child$time_index <- str_replace_all(Child$time_index, pattern = "-" ,replacement = "") 
+Child$time_index <- str_replace_all(Child$time_index, pattern = " " ,replacement = "")
+
+#Aggregate to get number of calls
+Child <- Child %>%
+                  group_by(time_index) %>%
+                  summarize(calls = n())
+
+#Create hr,day_of_week , week_of_month, weekend/ weekday
+Child$hr <- as.numeric(str_sub(Child$time_index, -2, -1)) #Create hr
+Child$date <- str_sub(Child$time_index, 1, 8)
+Child$date <- as.Date(Child$date , format =("%Y%m%d"))
+Child$Week_Of_Mth <- ceiling(day(Child$date) / 7)
+Child$Day_No <- wday(Child$date)
+Child$weekend <- ifelse(Child$Day_No == 6 | Child$Day_No == 7| Child$Day_No == 1, 1, 0)
+
+#Create key for Public_hol
+Child$Pub_key <- str_sub(Child$time_index, 1, 8)
+
+#Create Sch_Date_Key
+Child$Sch_Date_Key <- str_sub(Child$time_index, 1, 8)
+mean(Child$calls)
+```
+
+
+```{r}
+
+##################################################
+# Transform Public_hol
+##################################################
+Public_hol$Date <- as.character(Public_hol$Date)
+Public_hol$Date <- str_replace_all(Public_hol$Date, pattern = "17" ,replacement = "2016")
+Public_hol$Date <- str_replace_all(Public_hol$Date, pattern = "/" ,replacement = "")
+colnames(Public_hol)[1] <- "Pub_key"
+Public_hol$Holiday <- as.numeric(Public_hol$Holiday)
+Public_hol$Category <- as.numeric(Public_hol$Category) #3 is other, 1 is Christian, 2 is muslim
+
+#merge to Child
+Child <- merge(Public_hol , Child , by ="Pub_key", all.y = T)
+
+#Replace NAs in Holiday & Category with 0
+Child$Holiday[is.na(Child$Holiday)] <- 0
+Child$Category[is.na(Child$Category)] <- 0
+
+
+##################################################
+# Transform School_Dates
+##################################################
+School_Dates
+#First term
+School_Dates1 <- as.data.frame(seq(from = as.Date("2016/01/04"), to = as.Date("2016/04/08"), by = 1))
+colnames(School_Dates1)[1] <- "Sch_Date_Key"
+School_Dates1$Term <- 1
+
+#Second term
+School_Dates2 <- as.data.frame(seq(from = as.Date("2016/05/02"), to = as.Date("2016/08/05"), by = 1))
+colnames(School_Dates2)[1] <- "Sch_Date_Key"
+School_Dates2$Term <- 2
+
+#Third term
+School_Dates3 <- as.data.frame(seq(from = as.Date("2016/09/05"), to = as.Date("2016/11/18"), by = 1))
+colnames(School_Dates3)[1] <- "Sch_Date_Key"
+School_Dates3$Term <- 3
+
+#School_Dates_Final 
+School_Dates_Final <- rbind(School_Dates1, School_Dates2, School_Dates3)
+School_Dates_Final$Sch_Date_Key <- as.character(School_Dates_Final$Sch_Date_Key)
+School_Dates_Final$Sch_Date_Key <- str_replace_all(School_Dates_Final$Sch_Date_Key, pattern = "-" ,replacement = "")
+
+#merge to Child
+Child <- merge(School_Dates_Final, Child, by = "Sch_Date_Key", all.y = T)
+
+#Replace NAs in Term with 0
+Child$Term[is.na(Child$Term)] <- 0
+
+
+
+##################################################
+# Prepare Submit
+##################################################
+Submit$time_index <- as.character(Submit$time_index)
+
+#Create hr,day_of_week , week_of_month, weekend/ weekday
+Submit$hr <- as.numeric(str_sub(Submit$time_index, -2, -1)) #Create hr
+Submit$calls <- NULL
+Submit$date <- str_sub(Submit$time_index, 1, 8)
+Submit$date <- as.Date(Submit$date , format =("%Y%m%d"))
+Submit$Week_Of_Mth <- ceiling(day(Submit$date) / 7)
+Submit$Day_No <- wday(Submit$date)
+Submit$weekend <- ifelse(Submit$Day_No == 6 | Submit$Day_No == 7| Submit$Day_No == 1, 1, 0)
+
+
+#Create key for Public_hol
+Submit$Pub_key <- str_sub(Submit$time_index, 1, 8)
+#Create Sch_Date_Key
+Submit$Sch_Date_Key <- str_sub(Submit$time_index, 1, 8)
+
+
+#merge to Submit
+Submit <- merge(Public_hol , Submit , by ="Pub_key", all.y = T)
+#Replace NAs in Holiday & Category with 0
+Submit$Holiday[is.na(Submit$Holiday)] <- 0
+Submit$Category[is.na(Submit$Category)] <- 0
+# summary(Submit)
+
+
+#merge to Submit
+Submit <- merge(School_Dates_Final, Submit, by = "Sch_Date_Key", all.y = T)
+#Replace NAs in Term with 0
+Submit$Term[is.na(Submit$Term)] <- 0
+
+
+
+
+##################################################
+# Transform Weather1 Nairobi Airport
+##################################################
+#Subset to obtain columns with less missing values
+Weather <- Weather[,c(1,2,6,7,8,11,17,18,19,22,23)]
+Weather$Local.time.in.Nairobi..airport. <- str_sub(Weather$Local.time.in.Nairobi..airport., 1, 13)
+Weather$time_index <-   paste(str_sub(Weather$Local.time.in.Nairobi..airport., 7, 10),
+                              str_sub(Weather$Local.time.in.Nairobi..airport., 4, 5),
+                              str_sub(Weather$Local.time.in.Nairobi..airport., 1, 2),
+                              str_sub(Weather$Local.time.in.Nairobi..airport., 12, 13), sep = "")
+
+Weather$Local.time.in.Nairobi..airport. <- NULL
+Weather <- Weather[,c(11,1:10)]
+cols <- c(2:11)
+Weather[cols] <- lapply(Weather[cols], as.numeric)
+t1 <- as.data.frame(Submit$time_index)
+colnames(t1)[1] <- "time_index"
+t2 <- as.data.frame(Child$time_index)
+colnames(t2)[1] <- "time_index"
+Weather2 <- rbind(t1,t2)
+Weather2$time_index <- as.character(Weather2$time_index)
+Weather2 <- as.data.frame(Weather2[with(Weather2,order(time_index, decreasing = F )),])
+colnames(Weather2)[1] <- "time_index"
+
+#Merge Weather to Weather2
+Weather2 <- merge(Weather,Weather2 , by = "time_index", all.y = T)
+library(xts)
+Weather2 <- na.locf(Weather2)
+
+#merge to Child
+Child <- merge(Weather2, Child, by = "time_index", all.y = T)
+Child <- na.omit(Child)
+
+#Merge to submit
+Submit <- merge(Weather2, Submit, by = "time_index", all.y = T)
+
+##################################################
+# Transform Weather for Nairobi Wilson Airport
+##################################################
+#Subset to obtain columns with less missing values
+Weather_wilson <- Weather_wilson[,c(1,2,3,4,5,6,7,11,12,13)]
+Weather_wilson$Local.time.in.Nairobi...Wilson..airport. <- str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 1, 13)
+Weather_wilson$time_index <-   paste(str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 7, 10),
+                              str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 4, 5),
+                              str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 1, 2),
+                              str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 12, 13), sep = "")
+
+Weather_wilson$Local.time.in.Nairobi...Wilson..airport. <- NULL
+Weather_wilson <- Weather_wilson[,c(10,1:9)]
+cols <- c(2:10)
+Weather_wilson[cols] <- lapply(Weather_wilson[cols], as.numeric)
+t1 <- as.data.frame(Submit$time_index)
+colnames(t1)[1] <- "time_index"
+t2 <- as.data.frame(Child$time_index)
+colnames(t2)[1] <- "time_index"
+Weather_wilson2 <- rbind(t1,t2)
+Weather_wilson2$time_index <- as.character(Weather_wilson2$time_index)
+Weather_wilson2 <- as.data.frame(Weather_wilson2[with(Weather_wilson2,order(time_index, decreasing = F )),])
+colnames(Weather_wilson2)[1] <- "time_index"
+
+#Merge Weather_wilson to Weather_wilson2
+Weather_wilson2 <- merge(Weather_wilson,Weather_wilson2 , by = "time_index", all.y = T)
+library(xts)
+Weather_wilson2 <- na.locf(Weather_wilson2)
+
+#merge to Child
+Child <- merge(Weather_wilson2, Child, by = "time_index", all.y = T)
+Child <- na.omit(Child)
+
+#Merge to submit
+Submit <- merge(Weather_wilson2, Submit, by = "time_index", all.y = T)
+
+
+#create new feature from index
+Child$time <- str_sub(Child$time_index, 5, 10)
+Child$time <- as.numeric(Child$time)
+
+Submit$time <- str_sub(Submit$time_index, 5, 10)
+Submit$time <- as.numeric(Submit$time)
+
+Child$cty <- (Child$c - Child$T.y)/(Child$c + Child$T.y)
+Submit$cty <- (Submit$c - Submit$T.y)/(Submit$c + Submit$T.y)
+
+#################################################
+#Create hour target
+#################################################
+Hour_target <- Child[,c("hr","calls","Day_No","weekend","Holiday")]
+cols <- c(1,3:5)
+Hour_target[cols] <- lapply(Hour_target[cols], as.character)
+Hour_target$key_hrDayWeekHoli <- paste0(Hour_target$hr,Hour_target$Day_No,Hour_target$weekend,Hour_target$Holiday)
+Hour_target[,c("hr","Day_No","weekend","Holiday")] <- NULL
+Hour_target <- Hour_target %>%
+                      group_by(key_hrDayWeekHoli) %>%
+                      summarize(calls_mean = mean(calls),
+                                calls_max = max(calls),
+                                calls_min = min(calls),
+                                calls_med = median(calls))
+Hour_target$calls_range <- Hour_target$calls_max - Hour_target$calls_min
+
+#Merge to Child and Submit
+Child$key_hrDayWeekHoli <- paste0(Child$hr,Child$Day_No,Child$weekend,Child$Holiday)
+Submit$key_hrDayWeekHoli <- paste0(Submit$hr,Submit$Day_No,Submit$weekend,Submit$Holiday)
+
+Child <- merge(Hour_target, Child, by = "key_hrDayWeekHoli", all.y = T)
+Submit <- merge(Hour_target, Submit, by = "key_hrDayWeekHoli", all.y = T)
+
+Child[,c("key_hrDayWeekHoli","Sch_Date_Key","Pub_key","date")] <- NULL
+Submit[,c("key_hrDayWeekHoli","Sch_Date_Key","Pub_key","date")] <- NULL
+
+#################################################
+#Create hour target
+#################################################
+Hr_target <- Child[,c("hr","calls")]
+Hr_target <- Hr_target %>%
+                      group_by(hr) %>%
+                      summarize(calls_hr_mean = mean(calls),
+                                calls_hr_max = max(calls),
+                                calls_hr_min = min(calls),
+                                calls_hr_med = median(calls))
+
+Hr_target$calls_hr_range <- Hr_target$calls_hr_max - Hr_target$calls_hr_min
+
+#Merge to Child and Submit
+Child <- merge(Hr_target, Child, by = "hr", all.y = T)
+Submit <- merge(Hr_target, Submit, by = "hr", all.y = T)
+
+#################################################
+#Create day target
+#################################################
+Day_target <- Child[,c("Day_No","calls")]
+Day_target <- Day_target %>%
+                      group_by(Day_No) %>%
+                      summarize(calls_Day_mean = mean(calls),
+                                calls_Day_max = max(calls),
+                                calls_Day_min = min(calls),
+                                calls_Day_med = median(calls))
+
+Day_target$calls_Day_range <- Day_target$calls_Day_max - Day_target$calls_Day_min
+
+#Merge to Child and Submit
+Child <- merge(Day_target, Child, by = "Day_No", all.y = T)
+Submit <- merge(Day_target, Submit, by = "Day_No", all.y = T)
+
+
+#################################################
+#Create hour_day target
+#################################################
+Hour_target <- Child[,c("hr","calls","Day_No")]
+cols <- c(1,3)
+Hour_target[cols] <- lapply(Hour_target[cols], as.character)
+Hour_target$key_hrDayWeekHoli <- paste0(Hour_target$hr,Hour_target$Day_No)
+Hour_target[,c("hr","Day_No")] <- NULL
+Hour_target <- Hour_target %>%
+                      group_by(key_hrDayWeekHoli) %>%
+                      summarize(calls_mean2 = mean(calls),
+                                calls_max2 = max(calls),
+                                calls_min2 = min(calls),
+                                calls_med2 = median(calls))
+Hour_target$calls_range2 <- Hour_target$calls_max2 - Hour_target$calls_min2
+
+#Merge to Child and Submit
+Child$key_hrDayWeekHoli <- paste0(Child$hr,Child$Day_No)
+Submit$key_hrDayWeekHoli <- paste0(Submit$hr,Submit$Day_No)
+
+Child <- merge(Hour_target, Child, by = "key_hrDayWeekHoli", all.y = T)
+Submit <- merge(Hour_target, Submit, by = "key_hrDayWeekHoli", all.y = T)
+
+Child[,c("key_hrDayWeekHoli")] <- NULL
+Submit[,c("key_hrDayWeekHoli")] <- NULL
+
+
+#################################################
+#Create hour_Term target
+#################################################
+Hour_target <- Child[,c("hr","calls","Term")]
+cols <- c(1,3)
+Hour_target[cols] <- lapply(Hour_target[cols], as.character)
+Hour_target$key_hrDayWeekHoli <- paste0(Hour_target$hr,Hour_target$Term)
+Hour_target[,c("hr","Term")] <- NULL
+Hour_target <- Hour_target %>%
+                      group_by(key_hrDayWeekHoli) %>%
+                      summarize(calls_mean3 = mean(calls),
+                                calls_max3 = max(calls),
+                                calls_min3 = min(calls),
+                                calls_med3 = median(calls))
+Hour_target$calls_range3 <- Hour_target$calls_max3 - Hour_target$calls_min3
+
+#Merge to Child and Submit
+Child$key_hrDayWeekHoli <- paste0(Child$hr,Child$Term)
+Submit$key_hrDayWeekHoli <- paste0(Submit$hr,Submit$Term)
+
+Child <- merge(Hour_target, Child, by = "key_hrDayWeekHoli", all.y = T)
+Submit <- merge(Hour_target, Submit, by = "key_hrDayWeekHoli", all.y = T)
+
+Child[,c("key_hrDayWeekHoli")] <- NULL
+Submit[,c("key_hrDayWeekHoli")] <- NULL
+
+#################################################
+#Create hour_weekend target
+#################################################
+Hour_target <- Child[,c("hr","calls","weekend")]
+cols <- c(1,3)
+Hour_target[cols] <- lapply(Hour_target[cols], as.character)
+Hour_target$key_hrDayWeekHoli <- paste0(Hour_target$hr,Hour_target$weekend)
+Hour_target[,c("hr","weekend")] <- NULL
+Hour_target <- Hour_target %>%
+                      group_by(key_hrDayWeekHoli) %>%
+                      summarize(calls_mean4 = mean(calls),
+                                calls_max4 = max(calls),
+                                calls_min4 = min(calls),
+                                calls_med4 = median(calls))
+Hour_target$calls_range4 <- Hour_target$calls_max4 - Hour_target$calls_min4
+
+#Merge to Child and Submit
+Child$key_hrDayWeekHoli <- paste0(Child$hr,Child$weekend)
+Submit$key_hrDayWeekHoli <- paste0(Submit$hr,Submit$weekend)
+
+Child <- merge(Hour_target, Child, by = "key_hrDayWeekHoli", all.y = T)
+Submit <- merge(Hour_target, Submit, by = "key_hrDayWeekHoli", all.y = T)
+
+Child[,c("key_hrDayWeekHoli")] <- NULL
+Submit[,c("key_hrDayWeekHoli")] <- NULL
+
+```
+
+#1st Model
+
+```{r}
+library(ggplot2) # Data visualization
+library(data.table)
+library(xgboost)
+library(caret)
+library(Matrix)
+
+
+Train_XG <- Child[,-c(33)]
+Test_XG <-  Submit[,-c(33)]
+
+train = Train_XG #training partition
+
+#Create Matrix
+dtrain <- sparse.model.matrix(calls ~ . -1, data = train)
+feature_names <- names(dtrain)
+target <- as.numeric(train[,"calls"])
+dtrain <- xgb.DMatrix( data = as.matrix(dtrain), label = target, missing= NA)
+
+
+###################
+#XG Boost setup 
+###################
+
+dtest_F <- xgb.DMatrix(data=as.matrix( Test_XG))
+
+###################
+#Cross Validation
+###################
+# Set up cross-validation scheme (3-fold)
+foldsCV <- createFolds(target, k=10, list=TRUE, returnTrain=FALSE)
+# foldsCV <- createMultiFolds(target, k = 10, times = 2)
+# foldsCV <- createTimeSlices(target, initialWindow = 10, horizon = 1, fixedWindow = TRUE,skip = 0)
+
+# Set xgboost parameters. These are not necessarily the optimal parameters.
+# Further grid tuning is needed. 
+
+
+
+  param <- list(booster = "gbtree"
+              #, objective = "multi:softprob"
+              , subsample = 0.85
+              , max_depth = 4
+              , colsample_bytree = 0.78
+              , eta = 0.015
+              #, lambda = 0.08
+              #, eval_metric = 'RMSE'
+              #, num_class = 9
+              , gamma = 0
+              #, base_score = 0.012 #average
+              , min_child_weight = 1
+                )
+  
+  xgb_cv <- xgb.cv(data=dtrain,
+                   params=param,
+                  nrounds=3000,
+                  prediction=TRUE,
+                  maximize=FALSE,
+                  folds=foldsCV,
+                  early_stopping_rounds = 250,
+                  print_every_n = 5
+  )
+  
+
+  # Check best results and get best nrounds
+  # print(xgb_cv$evaluation_log[which.min(xgb_cv$evaluation_log$test_mae_mean)])
+  nrounds <- xgb_cv$best_iteration
+  
+  ################
+  # Final model
+  ################
+  
+  xgb <- xgboost::xgboost(params = param
+                   , data = dtrain
+                  # , watchlist = list(train = dtrain)
+                   , nrounds = nrounds 
+                   , verbose = 1
+                   , print_every_n = 2
+                   #, feval = amm_mae
+                  )
+  ###############
+  # Results
+  ###############
+  #Feature imprtance
+  imp <- xgb.importance(feature_names, model =xgb)
+  imp
+  xgb.plot.importance(imp)
+
+  
+  
+  #Submission
+  test_new <- as.matrix(Test_XG)
+
+  base_prediction <- predict(xgb, newdata = test_new)
+base_submission <- data_frame(time_index = Submit$time_index, calls = base_prediction)
+
+#Round off
+base_submission$calls <- round(base_submission$calls,0)
+
+# base_submission$calls <- base_submission$calls^(1/0.2)
+write.csv(base_submission,file = "<Path to Data>/Firstmodel.csv", row.names = F)
+base_submission
+
+```
+## Start of Model 2
+
+#Load Data
+```{r}
+Child <- read.csv("<Path to Data>/train (1).csv")
+Submit <- read.csv("<Path to Data>/Sample_Submission (4).csv")
+Public_hol <-  read.csv("<Path to Data>/KenyaPublicHolidays2016.csv")
+School_Dates <- read.csv("<Path to Data>/NairobiSchoolDates2016.csv")
+Weather <- read.csv("<Path to Data>/63740.01.01.2016.06.09.2016.1.0.0.en.utf8.00000000 (1).csv")
+Weather_wilson <- read.csv("<Path to Data>/Nairobi_Wilson_airport_metar.csv")
+```
+
+
+#Transform data
+```{r}
+##################################################
+# Transform Child
+##################################################
+#Leave only calldate and subcat1
+Child <- Child[,c(1,4)]
+Child$calldate <- as.character(Child$calldate)
+Child$time_index <- str_sub(Child$calldate, 1, 13)
+Child$time_index <- str_replace_all(Child$time_index, pattern = "-" ,replacement = "") 
+Child$time_index <- str_replace_all(Child$time_index, pattern = " " ,replacement = "")
+
+#Aggregate to get number of calls
+Child <- Child %>%
+                  group_by(time_index) %>%
+                  summarize(calls = n())
+
+#Create hr,day_of_week , week_of_month, weekend/ weekday
+Child$hr <- as.numeric(str_sub(Child$time_index, -2, -1)) #Create hr
+Child$date <- str_sub(Child$time_index, 1, 8)
+Child$date <- as.Date(Child$date , format =("%Y%m%d"))
+Child$Week_Of_Mth <- ceiling(day(Child$date) / 7)
+Child$Day_No <- wday(Child$date)
+Child$weekend <- ifelse(Child$Day_No == 6 | Child$Day_No == 7| Child$Day_No == 1, 1, 0)
+
+#Create key for Public_hol
+Child$Pub_key <- str_sub(Child$time_index, 1, 8)
+
+#Create Sch_Date_Key
+Child$Sch_Date_Key <- str_sub(Child$time_index, 1, 8)
+mean(Child$calls)
+```
+
+```{r}
+
+##################################################
+# Transform Public_hol
+##################################################
+Public_hol$Date <- as.character(Public_hol$Date)
+Public_hol$Date <- str_replace_all(Public_hol$Date, pattern = "17" ,replacement = "2016")
+Public_hol$Date <- str_replace_all(Public_hol$Date, pattern = "/" ,replacement = "")
+colnames(Public_hol)[1] <- "Pub_key"
+Public_hol$Holiday <- as.numeric(Public_hol$Holiday)
+Public_hol$Category <- as.numeric(Public_hol$Category) #3 is other, 1 is Christian, 2 is muslim
+
+#merge to Child
+Child <- merge(Public_hol , Child , by ="Pub_key", all.y = T)
+
+#Replace NAs in Holiday & Category with 0
+Child$Holiday[is.na(Child$Holiday)] <- 0
+Child$Category[is.na(Child$Category)] <- 0
+
+
+##################################################
+# Transform School_Dates
+##################################################
+School_Dates
+#First term
+School_Dates1 <- as.data.frame(seq(from = as.Date("2016/01/04"), to = as.Date("2016/04/08"), by = 1))
+colnames(School_Dates1)[1] <- "Sch_Date_Key"
+School_Dates1$Term <- 1
+
+#Second term
+School_Dates2 <- as.data.frame(seq(from = as.Date("2016/05/02"), to = as.Date("2016/08/05"), by = 1))
+colnames(School_Dates2)[1] <- "Sch_Date_Key"
+School_Dates2$Term <- 2
+
+#Third term
+School_Dates3 <- as.data.frame(seq(from = as.Date("2016/09/05"), to = as.Date("2016/11/18"), by = 1))
+colnames(School_Dates3)[1] <- "Sch_Date_Key"
+School_Dates3$Term <- 3
+
+#School_Dates_Final 
+School_Dates_Final <- rbind(School_Dates1, School_Dates2, School_Dates3)
+School_Dates_Final$Sch_Date_Key <- as.character(School_Dates_Final$Sch_Date_Key)
+School_Dates_Final$Sch_Date_Key <- str_replace_all(School_Dates_Final$Sch_Date_Key, pattern = "-" ,replacement = "")
+
+#merge to Child
+Child <- merge(School_Dates_Final, Child, by = "Sch_Date_Key", all.y = T)
+
+#Replace NAs in Term with 0
+Child$Term[is.na(Child$Term)] <- 0
+
+
+
+##################################################
+# Prepare Submit
+##################################################
+Submit$time_index <- as.character(Submit$time_index)
+
+#Create hr,day_of_week , week_of_month, weekend/ weekday
+Submit$hr <- as.numeric(str_sub(Submit$time_index, -2, -1)) #Create hr
+Submit$calls <- NULL
+Submit$date <- str_sub(Submit$time_index, 1, 8)
+Submit$date <- as.Date(Submit$date , format =("%Y%m%d"))
+Submit$Week_Of_Mth <- ceiling(day(Submit$date) / 7)
+Submit$Day_No <- wday(Submit$date)
+Submit$weekend <- ifelse(Submit$Day_No == 6 | Submit$Day_No == 7| Submit$Day_No == 1, 1, 0)
+
+
+#Create key for Public_hol
+Submit$Pub_key <- str_sub(Submit$time_index, 1, 8)
+#Create Sch_Date_Key
+Submit$Sch_Date_Key <- str_sub(Submit$time_index, 1, 8)
+
+
+#merge to Submit
+Submit <- merge(Public_hol , Submit , by ="Pub_key", all.y = T)
+#Replace NAs in Holiday & Category with 0
+Submit$Holiday[is.na(Submit$Holiday)] <- 0
+Submit$Category[is.na(Submit$Category)] <- 0
+# summary(Submit)
+
+
+#merge to Submit
+Submit <- merge(School_Dates_Final, Submit, by = "Sch_Date_Key", all.y = T)
+#Replace NAs in Term with 0
+Submit$Term[is.na(Submit$Term)] <- 0
+
+
+
+
+##################################################
+# Transform Weather1 Nairobi Airport
+##################################################
+#Subset to obtain columns with less missing values
+Weather <- Weather[,c(1,2,6,7,8,11,17,18,19,22,23)]
+Weather$Local.time.in.Nairobi..airport. <- str_sub(Weather$Local.time.in.Nairobi..airport., 1, 13)
+Weather$time_index <-   paste(str_sub(Weather$Local.time.in.Nairobi..airport., 7, 10),
+                              str_sub(Weather$Local.time.in.Nairobi..airport., 4, 5),
+                              str_sub(Weather$Local.time.in.Nairobi..airport., 1, 2),
+                              str_sub(Weather$Local.time.in.Nairobi..airport., 12, 13), sep = "")
+
+Weather$Local.time.in.Nairobi..airport. <- NULL
+Weather <- Weather[,c(11,1:10)]
+cols <- c(2:11)
+Weather[cols] <- lapply(Weather[cols], as.numeric)
+t1 <- as.data.frame(Submit$time_index)
+colnames(t1)[1] <- "time_index"
+t2 <- as.data.frame(Child$time_index)
+colnames(t2)[1] <- "time_index"
+Weather2 <- rbind(t1,t2)
+Weather2$time_index <- as.character(Weather2$time_index)
+Weather2 <- as.data.frame(Weather2[with(Weather2,order(time_index, decreasing = F )),])
+colnames(Weather2)[1] <- "time_index"
+
+#Merge Weather to Weather2
+Weather2 <- merge(Weather,Weather2 , by = "time_index", all.y = T)
+library(xts)
+Weather2 <- na.locf(Weather2)
+
+#merge to Child
+Child <- merge(Weather2, Child, by = "time_index", all.y = T)
+Child <- na.omit(Child)
+
+#Merge to submit
+Submit <- merge(Weather2, Submit, by = "time_index", all.y = T)
+
+##################################################
+# Transform Weather for Nairobi Wilson Airport
+##################################################
+#Subset to obtain columns with less missing values
+Weather_wilson <- Weather_wilson[,c(1,2,3,4,5,6,7,11,12,13)]
+Weather_wilson$Local.time.in.Nairobi...Wilson..airport. <- str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 1, 13)
+Weather_wilson$time_index <-   paste(str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 7, 10),
+                              str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 4, 5),
+                              str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 1, 2),
+                              str_sub(Weather_wilson$Local.time.in.Nairobi...Wilson..airport., 12, 13), sep = "")
+
+Weather_wilson$Local.time.in.Nairobi...Wilson..airport. <- NULL
+Weather_wilson <- Weather_wilson[,c(10,1:9)]
+cols <- c(2:10)
+Weather_wilson[cols] <- lapply(Weather_wilson[cols], as.numeric)
+t1 <- as.data.frame(Submit$time_index)
+colnames(t1)[1] <- "time_index"
+t2 <- as.data.frame(Child$time_index)
+colnames(t2)[1] <- "time_index"
+Weather_wilson2 <- rbind(t1,t2)
+Weather_wilson2$time_index <- as.character(Weather_wilson2$time_index)
+Weather_wilson2 <- as.data.frame(Weather_wilson2[with(Weather_wilson2,order(time_index, decreasing = F )),])
+colnames(Weather_wilson2)[1] <- "time_index"
+
+#Merge Weather_wilson to Weather_wilson2
+Weather_wilson2 <- merge(Weather_wilson,Weather_wilson2 , by = "time_index", all.y = T)
+library(xts)
+Weather_wilson2 <- na.locf(Weather_wilson2)
+
+#merge to Child
+Child <- merge(Weather_wilson2, Child, by = "time_index", all.y = T)
+Child <- na.omit(Child)
+
+#Merge to submit
+Submit <- merge(Weather_wilson2, Submit, by = "time_index", all.y = T)
+
+#create new feature from index
+Child$time <- str_sub(Child$time_index, 5, 10)
+Child$time <- as.numeric(Child$time)
+
+Submit$time <- str_sub(Submit$time_index, 5, 10)
+Submit$time <- as.numeric(Submit$time)
+
+Child$cty <- (Child$c - Child$T.y)/(Child$c + Child$T.y)
+Submit$cty <- (Submit$c - Submit$T.y)/(Submit$c + Submit$T.y)
+
+#################################################
+#Create hour target
+#################################################
+Hour_target <- Child[,c("hr","calls","Day_No","weekend","Holiday")]
+cols <- c(1,3:5)
+Hour_target[cols] <- lapply(Hour_target[cols], as.character)
+Hour_target$key_hrDayWeekHoli <- paste0(Hour_target$hr,Hour_target$Day_No,Hour_target$weekend,Hour_target$Holiday)
+Hour_target[,c("hr","Day_No","weekend","Holiday")] <- NULL
+Hour_target <- Hour_target %>%
+                      group_by(key_hrDayWeekHoli) %>%
+                      summarize(calls_mean = mean(calls),
+                                calls_max = max(calls),
+                                calls_min = min(calls),
+                                calls_med = median(calls))
+Hour_target$calls_range <- Hour_target$calls_max - Hour_target$calls_min
+
+#Merge to Child and Submit
+Child$key_hrDayWeekHoli <- paste0(Child$hr,Child$Day_No,Child$weekend,Child$Holiday)
+Submit$key_hrDayWeekHoli <- paste0(Submit$hr,Submit$Day_No,Submit$weekend,Submit$Holiday)
+
+Child <- merge(Hour_target, Child, by = "key_hrDayWeekHoli", all.y = T)
+Submit <- merge(Hour_target, Submit, by = "key_hrDayWeekHoli", all.y = T)
+
+Child[,c("key_hrDayWeekHoli","Sch_Date_Key","Pub_key","date")] <- NULL
+Submit[,c("key_hrDayWeekHoli","Sch_Date_Key","Pub_key","date")] <- NULL
+
+#################################################
+#Create hour target
+#################################################
+Hr_target <- Child[,c("hr","calls")]
+Hr_target <- Hr_target %>%
+                      group_by(hr) %>%
+                      summarize(calls_hr_mean = mean(calls),
+                                calls_hr_max = max(calls),
+                                calls_hr_min = min(calls),
+                                calls_hr_med = median(calls))
+
+Hr_target$calls_hr_range <- Hr_target$calls_hr_max - Hr_target$calls_hr_min
+
+#Merge to Child and Submit
+Child <- merge(Hr_target, Child, by = "hr", all.y = T)
+Submit <- merge(Hr_target, Submit, by = "hr", all.y = T)
+
+```
+
+#Second model
+
+```{r}
+Train_XG <- Child[,-c(12)]
+Test_XG <-  Submit[,-c(12)]
+
+train = Train_XG #training partition
+
+#Create Matrix
+dtrain <- sparse.model.matrix(calls ~ . -1, data = train)
+feature_names <- names(dtrain)
+target <- as.numeric(train[,"calls"])
+dtrain <- xgb.DMatrix( data = as.matrix(dtrain), label = target, missing= NA)
+
+
+###################
+#XG Boost setup 
+###################
+
+dtest_F <- xgb.DMatrix(data=as.matrix( Test_XG))
+
+###################
+#Cross Validation
+###################
+# Set up cross-validation scheme (3-fold)
+foldsCV <- createFolds(target, k=10, list=TRUE, returnTrain=FALSE)
+
+# Set xgboost parameters. These are not necessarily the optimal parameters.
+# Further grid tuning is needed. 
+
+
+
+
+  param <- list(booster = "gbtree"
+              #, objective = "multi:softprob"
+              , subsample = 0.884
+              , max_depth = 12
+              , colsample_bytree = 1
+              , eta = 0.01
+              #, lambda = 0.08
+              #, eval_metric = 'RMSE'
+              #, num_class = 9
+              , gamma = 1.8
+              #, base_score = 0.012 #average
+              , min_child_weight = 19
+                )
+  
+  xgb_cv <- xgb.cv(data=dtrain,
+                   params=param,
+                  nrounds=2000,
+                  prediction=TRUE,
+                  maximize=FALSE,
+                  folds=foldsCV,
+                  early_stopping_rounds = 50,
+                  print_every_n = 5
+  )
+  
+
+  # Check best results and get best nrounds
+  # print(xgb_cv$evaluation_log[which.min(xgb_cv$evaluation_log$test_mae_mean)])
+  nrounds <- xgb_cv$best_iteration
+  
+  ################
+  # Final model
+  ################
+  
+  xgb <- xgboost::xgboost(params = param
+                   , data = dtrain
+                  # , watchlist = list(train = dtrain)
+                   , nrounds = 1050 
+                   , verbose = 1
+                   , print_every_n = 2
+                   #, feval = amm_mae
+                  )
+  ###############
+  # Results
+  ###############
+  #Feature imprtance
+  imp <- xgb.importance(feature_names, model =xgb)
+  imp
+  xgb.plot.importance(imp)
+  imp$Feature
+  
+  
+  #Submission
+  test_new <- as.matrix(Test_XG)
+
+  #Prep for submit
+
+  
+  base_prediction <- predict(xgb, newdata = test_new)
+base_submission <- data_frame(time_index = Submit$time_index, calls = base_prediction)
+
+#Round off
+base_submission$calls <- round(base_submission$calls,0)
+
+# base_submission$calls <- base_submission$calls^(1/0.2)
+write.csv(base_submission,file = "<Path to Data>/Secondmodel.csv", row.names = F)
+base_submission
+
+```
+
+
+## Ensembles First and Second Model
+```{r}
+Child_Firstmodel <- read.csv("<Path to Data>/Firstmodel.csv")
+Child_Secondmodel <- read.csv("<Path to Data>/Secondmodel.csv")
+
+Child_submit <- rbind(Child_Firstmodel,Child_Secondmodel)
+
+#Average
+library(sqldf)
+Child_submit <- sqldf('SELECT time_index, avg(calls) FROM Child_submit
+               GROUP BY time_index')
+colnames(Child_submit)[2] <- c("calls")
+
+
+#Round off
+Child_submit$calls <- round(Child_submit$calls,0)
+write.csv(Child_submit,file = "<Path to Data>/Child_ensemble.csv", row.names = F)
+Child_submit
+```
+
