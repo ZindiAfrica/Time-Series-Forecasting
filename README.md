@@ -37,8 +37,10 @@ Zindi has hosted some challenges based on Time-Series Forecasting Solutions.
 
 2. [AirQo Ugandan Air Quality Forecast Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/AirQo%20Ugadan%20Air%20Quality%20Forecast%20Challenge)
 
-3. [Sea Turtle Rescue: Forecast Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Sea%20Turtle%20Rescue%20Forecast%20Challenge)
+3. [Mtoto News Childline Kenya Call Volume Prediction Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Mtoto%20New%20Childline%20Kenya%20Call%20Prediction%20Challenge)
 
-4. [UNICEF Arm 2030 VISION #1: Flood Prediction in Malawi](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/UNICEF%20Arm%202030%20VISION%20%231%20%20Flood%20Prediction%20in%20Malawi)
+4. [Sea Turtle Rescue: Forecast Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Sea%20Turtle%20Rescue%20Forecast%20Challenge)
 
-5. [Wazihub Soil Moisture Prediction Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Wazihub%20Soil%20Moisture%20Prediction%20Challenge)
+5. [UNICEF Arm 2030 VISION #1: Flood Prediction in Malawi](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/UNICEF%20Arm%202030%20VISION%20%231%20%20Flood%20Prediction%20in%20Malawi)
+
+6. [Wazihub Soil Moisture Prediction Challenge](https://github.com/ZindiAfrica/Time-Series-Forecasting/tree/main/Wazihub%20Soil%20Moisture%20Prediction%20Challenge)
