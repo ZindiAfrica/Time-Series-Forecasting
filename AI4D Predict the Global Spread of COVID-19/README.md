@@ -73,3 +73,15 @@ The Mean Absolute Error was used to evaluate accuracy of the submitted solutions
 Accurately modelling the spread of these viral diseases is critical for policymakers and health workers to take appropriate actions to contain and mitigate the impact of these disease.
 
 This challenge could help contribute to the global body of knowledge which will help stem the impact of pandemics such as this one as well as those in the future.
+
+
+[![CC BY 4.0][cc-by-shield]][cc-by]
+
+This work is licensed under a
+[Creative Commons Attribution 4.0 International License][cc-by].
+
+[![CC BY 4.0][cc-by-image]][cc-by]
+
+[cc-by]: http://creativecommons.org/licenses/by/4.0/
+[cc-by-image]: https://i.creativecommons.org/l/by/4.0/88x31.png
+[cc-by-shield]: https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg
